@@ -6,9 +6,15 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DATA_DIR = process.env.NODE_ENV === "production" 
-  ? "/data" 
-  : path.join(__dirname, "../../../data");
+/*
+  Render writable directory:
+  Always use project root or /var/data (if disk attached)
+*/
+
+const DATA_DIR =
+  process.env.NODE_ENV === "production"
+    ? path.join(process.cwd(), "data")   // ✅ SAFE ON RENDER
+    : path.join(__dirname, "../../../data");
 
 // Ensure data directory exists
 if (!fs.existsSync(DATA_DIR)) {
@@ -20,7 +26,6 @@ const DB_PATH = path.join(DATA_DIR, "printify-auto.db");
 export const db = new Database(DB_PATH);
 
 export function initDatabase() {
-  // Products table
   db.exec(`
     CREATE TABLE IF NOT EXISTS products (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,7 +45,6 @@ export function initDatabase() {
     )
   `);
 
-  // Processing logs table
   db.exec(`
     CREATE TABLE IF NOT EXISTS logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,7 +57,6 @@ export function initDatabase() {
     )
   `);
 
-  // Settings table
   db.exec(`
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
@@ -62,7 +65,6 @@ export function initDatabase() {
     )
   `);
 
-  // Insert default settings if not exists
   const defaultSettings = {
     blueprint_id: "145",
     print_provider_id: "99",
@@ -83,20 +85,27 @@ export function initDatabase() {
 }
 
 export function getSetting(key: string): string | null {
-  const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined;
+  const row = db
+    .prepare("SELECT value FROM settings WHERE key = ?")
+    .get(key) as { value: string } | undefined;
+
   return row?.value ?? null;
 }
 
 export function setSetting(key: string, value: string): void {
   db.prepare(`
-    INSERT INTO settings (key, value, updated_at) 
+    INSERT INTO settings (key, value, updated_at)
     VALUES (?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = CURRENT_TIMESTAMP
+    ON CONFLICT(key)
+    DO UPDATE SET value = ?, updated_at = CURRENT_TIMESTAMP
   `).run(key, value, value);
 }
 
 export function getAllSettings(): Record<string, string> {
-  const rows = db.prepare("SELECT key, value FROM settings").all() as { key: string; value: string }[];
+  const rows = db
+    .prepare("SELECT key, value FROM settings")
+    .all() as { key: string; value: string }[];
+
   return Object.fromEntries(rows.map(r => [r.key, r.value]));
 }
 
