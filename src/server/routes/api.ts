@@ -9,14 +9,22 @@ import { uploadImageToPrintify, createProductDraft, getShops } from "../services
 
 const router = Router();
 
-// Configure multer for file uploads
-const uploadsDir = process.env.NODE_ENV === "production"
-  ? "/data/uploads"
-  : path.join(process.cwd(), "uploads");
+/*
+  SAFE STORAGE ROOT
+  Always inside project directory.
+*/
+const DATA_ROOT = path.join(process.cwd(), "data");
+const uploadsDir = path.join(DATA_ROOT, "uploads");
+const processedDir = path.join(DATA_ROOT, "processed");
 
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
+/* Ensure directories exist */
+for (const dir of [DATA_ROOT, uploadsDir, processedDir]) {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
 }
+
+/* ---------------- MULTER CONFIG ---------------- */
 
 const storage = multer.diskStorage({
   destination: uploadsDir,
@@ -37,16 +45,18 @@ const upload = multer({
     }
   },
   limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB max
+    fileSize: 50 * 1024 * 1024,
   },
 });
 
-// Health check
+/* ---------------- HEALTH ---------------- */
+
 router.get("/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-// Get dashboard stats
+/* ---------------- STATS ---------------- */
+
 router.get("/stats", (req, res) => {
   try {
     const totalProducts = db.prepare("SELECT COUNT(*) as count FROM products").get() as { count: number };
@@ -62,12 +72,13 @@ router.get("/stats", (req, res) => {
       totalLogs: totalLogs.count,
       errorLogs: errorLogs.count,
     });
-  } catch (error) {
+  } catch {
     res.status(500).json({ error: "Failed to fetch stats" });
   }
 });
 
-// List products
+/* ---------------- PRODUCTS ---------------- */
+
 router.get("/products", (req, res) => {
   try {
     const page = parseInt(req.query.page as string) || 1;
@@ -75,8 +86,8 @@ router.get("/products", (req, res) => {
     const offset = (page - 1) * limit;
 
     const products = db.prepare(`
-      SELECT * FROM products 
-      ORDER BY created_at DESC 
+      SELECT * FROM products
+      ORDER BY created_at DESC
       LIMIT ? OFFSET ?
     `).all(limit, offset);
 
@@ -89,34 +100,28 @@ router.get("/products", (req, res) => {
       total: total.count,
       pages: Math.ceil(total.count / limit),
     });
-  } catch (error) {
+  } catch {
     res.status(500).json({ error: "Failed to fetch products" });
   }
 });
 
-// Get single product
+/* ---------------- SINGLE PRODUCT ---------------- */
+
 router.get("/products/:id", (req, res) => {
   try {
     const product = db.prepare("SELECT * FROM products WHERE id = ?").get(req.params.id);
-    if (!product) {
-      return res.status(404).json({ error: "Product not found" });
-    }
+    if (!product) return res.status(404).json({ error: "Product not found" });
     res.json(product);
-  } catch (error) {
+  } catch {
     res.status(500).json({ error: "Failed to fetch product" });
   }
 });
 
-// Upload and process image
+/* ---------------- UPLOAD ---------------- */
+
 router.post("/upload", upload.single("image"), async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: "No image uploaded" });
-    }
-
-    const processedDir = process.env.NODE_ENV === "production"
-      ? "/data/processed"
-      : path.join(process.cwd(), "processed");
+    if (!req.file) return res.status(400).json({ error: "No image uploaded" });
 
     const result = await processImage(req.file.path, processedDir);
 
@@ -131,41 +136,11 @@ router.post("/upload", upload.single("image"), async (req, res) => {
   }
 });
 
-// Upload multiple images
-router.post("/upload-bulk", upload.array("images", 50), async (req, res) => {
-  try {
-    const files = req.files as Express.Multer.File[];
-    if (!files || files.length === 0) {
-      return res.status(400).json({ error: "No images uploaded" });
-    }
+/* ---------------- ANALYZE ---------------- */
 
-    const processedDir = process.env.NODE_ENV === "production"
-      ? "/data/processed"
-      : path.join(process.cwd(), "processed");
-
-    const results = [];
-    for (const file of files) {
-      const result = await processImage(file.path, processedDir);
-      results.push({
-        filename: file.originalname,
-        success: result.success,
-        productId: result.productId,
-        error: result.error,
-      });
-    }
-
-    res.json({ results });
-  } catch (error) {
-    res.status(500).json({ error: error instanceof Error ? error.message : "Bulk upload failed" });
-  }
-});
-
-// Analyze image without creating product
 router.post("/analyze", upload.single("image"), async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: "No image uploaded" });
-    }
+    if (!req.file) return res.status(400).json({ error: "No image uploaded" });
 
     const imageBuffer = fs.readFileSync(req.file.path);
     const analysis = await analyzeImage(imageBuffer);
@@ -176,11 +151,11 @@ router.post("/analyze", upload.single("image"), async (req, res) => {
   }
 });
 
-// Create draft from analysis
+/* ---------------- CREATE DRAFT ---------------- */
+
 router.post("/create-draft", async (req, res) => {
   try {
     const { imageId, title, description, bullets, tags } = req.body;
-
     if (!imageId || !title) {
       return res.status(400).json({ error: "Missing required fields" });
     }
@@ -198,67 +173,29 @@ router.post("/create-draft", async (req, res) => {
   }
 });
 
-// Get logs
-router.get("/logs", (req, res) => {
-  try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 50;
-    const offset = (page - 1) * limit;
-    const status = req.query.status as string;
+/* ---------------- SETTINGS ---------------- */
 
-    let query = "SELECT * FROM logs";
-    const params: (string | number)[] = [];
-
-    if (status) {
-      query += " WHERE status = ?";
-      params.push(status);
-    }
-
-    query += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
-    params.push(limit, offset);
-
-    const logs = db.prepare(query).all(...params);
-    const total = db.prepare(
-      status 
-        ? "SELECT COUNT(*) as count FROM logs WHERE status = ?" 
-        : "SELECT COUNT(*) as count FROM logs"
-    ).get(...(status ? [status] : [])) as { count: number };
-
-    res.json({
-      data: logs,
-      page,
-      limit,
-      total: total.count,
-    });
-  } catch (error) {
-    res.status(500).json({ error: "Failed to fetch logs" });
-  }
-});
-
-// Get settings
 router.get("/settings", (req, res) => {
   try {
-    const settings = getAllSettings();
-    res.json(settings);
-  } catch (error) {
+    res.json(getAllSettings());
+  } catch {
     res.status(500).json({ error: "Failed to fetch settings" });
   }
 });
 
-// Update settings
 router.put("/settings", (req, res) => {
   try {
-    const updates = req.body;
-    for (const [key, value] of Object.entries(updates)) {
+    for (const [key, value] of Object.entries(req.body)) {
       setSetting(key, String(value));
     }
     res.json({ success: true, settings: getAllSettings() });
-  } catch (error) {
+  } catch {
     res.status(500).json({ error: "Failed to update settings" });
   }
 });
 
-// Get Printify shops
+/* ---------------- PRINTIFY ---------------- */
+
 router.get("/printify/shops", async (req, res) => {
   try {
     const shops = await getShops();
@@ -268,23 +205,13 @@ router.get("/printify/shops", async (req, res) => {
   }
 });
 
-// Retry failed product
+/* ---------------- RETRY ---------------- */
+
 router.post("/products/:id/retry", async (req, res) => {
   try {
     const product = db.prepare("SELECT * FROM products WHERE id = ?").get(req.params.id) as { filename: string } | undefined;
-    if (!product) {
-      return res.status(404).json({ error: "Product not found" });
-    }
+    if (!product) return res.status(404).json({ error: "Product not found" });
 
-    const uploadsDir = process.env.NODE_ENV === "production"
-      ? "/data/uploads"
-      : path.join(process.cwd(), "uploads");
-    
-    const processedDir = process.env.NODE_ENV === "production"
-      ? "/data/processed"
-      : path.join(process.cwd(), "processed");
-
-    // Check if file exists in uploads or processed
     let filePath = path.join(uploadsDir, product.filename);
     if (!fs.existsSync(filePath)) {
       filePath = path.join(processedDir, product.filename);
@@ -294,7 +221,6 @@ router.post("/products/:id/retry", async (req, res) => {
       return res.status(404).json({ error: "Image file not found" });
     }
 
-    // Reset product status
     db.prepare("UPDATE products SET status = 'pending' WHERE id = ?").run(req.params.id);
 
     const result = await processImage(filePath, processedDir);
