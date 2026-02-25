@@ -13,7 +13,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
 export async function analyzeImage(imageBuffer: Buffer): Promise<AnalysisResult> {
   const model = genAI.getGenerativeModel({
-    model: "gemini-1.5-flash-latest"
+    model: "gemini-1.5-flash-001"
   });
 
   const base64Image = imageBuffer.toString("base64");
