@@ -13,7 +13,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
 export async function analyzeImage(imageBuffer: Buffer): Promise<AnalysisResult> {
   const model = genAI.getGenerativeModel({
-    model: "gemini-1.5-flash"
+    model: "gemini-pro-vision"
   });
 
   const base64Image = imageBuffer.toString("base64");
@@ -36,21 +36,21 @@ Return ONLY valid JSON in this format:
 `;
 
   const result = await model.generateContent({
-    contents: [
-      {
-        role: "user",
-        parts: [
-          { text: prompt },
-          {
-            inlineData: {
-              mimeType: "image/png",
-              data: base64Image
-            }
+  contents: [
+    {
+      role: "user",
+      parts: [
+        { text: prompt },
+        {
+          inlineData: {
+            mimeType: "image/png",
+            data: base64Image
           }
-        ]
-      }
-    ]
-  });
+        }
+      ]
+    }
+  ]
+});
 
   const text = result.response.text();
 
